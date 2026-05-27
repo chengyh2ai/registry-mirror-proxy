@@ -30,6 +30,46 @@ https://chengyh2go-cn-beijing.cr.volces.com
 - `/healthz`、`/readyz`、`/metrics`。
 - systemd 部署样例。
 
+## 上游认证
+
+如果上游镜像服务需要登录，不要让客户登录真实上游域名。可以把上游账号密码配置在代理侧：
+
+```yaml
+upstream_username: "your-upstream-user"
+upstream_password: "your-upstream-password-or-token"
+```
+
+生产环境更建议通过 systemd 环境变量注入：
+
+```ini
+[Service]
+Environment="REGISTRY_MIRROR_UPSTREAM_USERNAME=your-upstream-user"
+Environment="REGISTRY_MIRROR_UPSTREAM_PASSWORD=your-upstream-password-or-token"
+```
+
+代理会在内部请求上游 token，并用 Bearer token 重试 manifest/blob 请求。
+
+火山引擎也可以通过 `GetAuthorizationToken` 自动获取临时访问凭据：
+
+```yaml
+volc_auth_enabled: true
+volc_region: "cn-beijing"
+volc_endpoint: "https://cr.cn-beijing.volcengineapi.com"
+volc_registry: "你的实例名称"
+```
+
+AK/SK 建议通过 systemd 环境变量注入：
+
+```ini
+[Service]
+Environment="REGISTRY_MIRROR_VOLC_AUTH_ENABLED=true"
+Environment="REGISTRY_MIRROR_VOLC_ACCESS_KEY=你的AK"
+Environment="REGISTRY_MIRROR_VOLC_SECRET_KEY=你的SK"
+Environment="REGISTRY_MIRROR_VOLC_REGISTRY=你的实例名称"
+```
+
+代理会缓存 `GetAuthorizationToken` 返回的 `Username` 和 `Token`，并在过期前自动刷新。
+
 ## 快速开始
 
 ```bash

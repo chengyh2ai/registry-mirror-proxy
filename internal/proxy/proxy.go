@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"registry-mirror/internal/auth"
 	"registry-mirror/internal/config"
 )
 
@@ -30,6 +31,13 @@ type Proxy struct {
 	cache          *DiskCache
 	allowedClients []*net.IPNet
 	sem            chan struct{}
+	upstreamUser   string
+	upstreamPass   string
+	credProvider   credentialProvider
+}
+
+type credentialProvider interface {
+	BasicAuth(context.Context) (string, string, error)
 }
 
 func New(cfg config.Config, logger *slog.Logger) (*Proxy, error) {
@@ -96,6 +104,20 @@ func New(cfg config.Config, logger *slog.Logger) (*Proxy, error) {
 	if cfg.MaxConcurrentRequests > 0 {
 		sem = make(chan struct{}, cfg.MaxConcurrentRequests)
 	}
+	var provider credentialProvider
+	if cfg.VolcAuthEnabled {
+		provider, err = auth.NewVolcProvider(auth.VolcConfig{
+			AccessKey:     cfg.VolcAccessKey,
+			SecretKey:     cfg.VolcSecretKey,
+			Region:        cfg.VolcRegion,
+			Endpoint:      cfg.VolcEndpoint,
+			Registry:      cfg.VolcRegistry,
+			RefreshBefore: cfg.VolcRefreshBefore,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &Proxy{
 		upstreams:      upstreams,
@@ -109,6 +131,9 @@ func New(cfg config.Config, logger *slog.Logger) (*Proxy, error) {
 		cache:          cache,
 		allowedClients: cidrs,
 		sem:            sem,
+		upstreamUser:   cfg.UpstreamUsername,
+		upstreamPass:   cfg.UpstreamPassword,
+		credProvider:   provider,
 	}, nil
 }
 
@@ -198,11 +223,20 @@ func (p *Proxy) Ready(ctx context.Context) error {
 func (p *Proxy) doUpstream(r *http.Request) (*http.Response, error) {
 	var lastErr error
 	for _, upstream := range p.upstreams {
-		req, err := p.newUpstreamRequest(r, upstream)
+		resp, err := p.doOneUpstream(r, upstream, "")
 		if err != nil {
-			return nil, err
+			lastErr = err
+			continue
 		}
-		resp, err := p.client.Do(req)
+		if resp.StatusCode == http.StatusUnauthorized && r.Header.Get("Authorization") == "" {
+			_ = resp.Body.Close()
+			token, tokenErr := p.fetchBearerToken(r, upstream, resp)
+			if tokenErr == nil && token != "" {
+				resp, err = p.doOneUpstream(r, upstream, "Bearer "+token)
+			} else {
+				err = tokenErr
+			}
+		}
 		if err != nil {
 			lastErr = err
 			continue
@@ -220,6 +254,21 @@ func (p *Proxy) doUpstream(r *http.Request) (*http.Response, error) {
 	return nil, lastErr
 }
 
+func (p *Proxy) doOneUpstream(r *http.Request, upstream *url.URL, authorization string) (*http.Response, error) {
+	req, err := p.newUpstreamRequest(r, upstream)
+	if err != nil {
+		return nil, err
+	}
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	} else {
+		if err := p.setUpstreamBasicAuth(req); err != nil {
+			return nil, err
+		}
+	}
+	return p.client.Do(req)
+}
+
 func (p *Proxy) newUpstreamRequest(r *http.Request, upstream *url.URL) (*http.Request, error) {
 	target := *upstream
 	target.Path = singleJoiningSlash(upstream.Path, r.URL.Path)
@@ -235,6 +284,158 @@ func (p *Proxy) newUpstreamRequest(r *http.Request, upstream *url.URL) (*http.Re
 	req.Header.Set("X-Forwarded-Proto", "https")
 	req.Header.Set("X-Forwarded-For", appendForwardedFor(r))
 	return req, nil
+}
+
+type bearerChallenge struct {
+	Realm   string
+	Service string
+	Scope   string
+}
+
+func (p *Proxy) fetchBearerToken(r *http.Request, upstream *url.URL, resp *http.Response) (string, error) {
+	challenge, err := parseBearerChallenge(resp.Header.Values("WWW-Authenticate"))
+	if err != nil {
+		return "", err
+	}
+	realm, err := url.Parse(challenge.Realm)
+	if err != nil {
+		return "", err
+	}
+	if !realm.IsAbs() {
+		realm.Scheme = upstream.Scheme
+		realm.Host = upstream.Host
+	}
+	if realm.Scheme != "https" {
+		return "", errors.New("refuse non-https token realm")
+	}
+	q := realm.Query()
+	if challenge.Service != "" && q.Get("service") == "" {
+		q.Set("service", challenge.Service)
+	}
+	if challenge.Scope != "" && q.Get("scope") == "" {
+		q.Set("scope", challenge.Scope)
+	}
+	realm.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, realm.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	copyProxyRequestHeaders(req.Header, r.Header)
+	req.Header.Del("Authorization")
+	if err := p.setUpstreamBasicAuth(req); err != nil {
+		return "", err
+	}
+	req.Host = realm.Host
+	if cookies := cookiesFromSetCookie(resp.Header.Values("Set-Cookie")); cookies != "" {
+		req.Header.Set("Cookie", cookies)
+	}
+	tokenResp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer tokenResp.Body.Close()
+	if tokenResp.StatusCode < 200 || tokenResp.StatusCode >= 300 {
+		return "", fmt.Errorf("token endpoint returned %s", tokenResp.Status)
+	}
+	var body struct {
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(io.LimitReader(tokenResp.Body, 4<<20)).Decode(&body); err != nil {
+		return "", err
+	}
+	if body.Token != "" {
+		return body.Token, nil
+	}
+	if body.AccessToken != "" {
+		return body.AccessToken, nil
+	}
+	return "", errors.New("token endpoint returned no token")
+}
+
+func (p *Proxy) setUpstreamBasicAuth(req *http.Request) error {
+	if p.credProvider != nil {
+		username, password, err := p.credProvider.BasicAuth(req.Context())
+		if err != nil {
+			return err
+		}
+		req.SetBasicAuth(username, password)
+		return nil
+	}
+	if p.upstreamUser == "" && p.upstreamPass == "" {
+		return nil
+	}
+	req.SetBasicAuth(p.upstreamUser, p.upstreamPass)
+	return nil
+}
+
+func parseBearerChallenge(values []string) (bearerChallenge, error) {
+	for _, value := range values {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "bearer ") {
+			continue
+		}
+		params := parseAuthParams(strings.TrimSpace(value[len("Bearer "):]))
+		realm := params["realm"]
+		if realm == "" {
+			return bearerChallenge{}, errors.New("bearer challenge missing realm")
+		}
+		return bearerChallenge{Realm: realm, Service: params["service"], Scope: params["scope"]}, nil
+	}
+	return bearerChallenge{}, errors.New("bearer challenge not found")
+}
+
+func parseAuthParams(raw string) map[string]string {
+	out := make(map[string]string)
+	for _, part := range splitAuthParams(raw) {
+		key, value, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		key = strings.ToLower(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		value = strings.Trim(value, `"`)
+		out[key] = value
+	}
+	return out
+}
+
+func splitAuthParams(raw string) []string {
+	var parts []string
+	var b strings.Builder
+	inQuote := false
+	for _, r := range raw {
+		switch r {
+		case '"':
+			inQuote = !inQuote
+			b.WriteRune(r)
+		case ',':
+			if inQuote {
+				b.WriteRune(r)
+				continue
+			}
+			parts = append(parts, b.String())
+			b.Reset()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() > 0 {
+		parts = append(parts, b.String())
+	}
+	return parts
+}
+
+func cookiesFromSetCookie(values []string) string {
+	var cookies []string
+	for _, value := range values {
+		nameValue, _, _ := strings.Cut(value, ";")
+		nameValue = strings.TrimSpace(nameValue)
+		if nameValue != "" {
+			cookies = append(cookies, nameValue)
+		}
+	}
+	return strings.Join(cookies, "; ")
 }
 
 func (p *Proxy) writeUpstreamResponse(w http.ResponseWriter, r *http.Request, resp *http.Response) {

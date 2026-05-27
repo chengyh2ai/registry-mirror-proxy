@@ -2,6 +2,22 @@ listen_addr: ":443"
 upstream: "https://chengyh2go-cn-beijing.cr.volces.com"
 upstreams: []
 
+# Optional upstream credentials. Prefer REGISTRY_MIRROR_UPSTREAM_USERNAME and
+# REGISTRY_MIRROR_UPSTREAM_PASSWORD, or protect this file with mode 0600.
+upstream_username: ""
+upstream_password: ""
+
+# Optional Volcengine CR temporary credential auto-refresh. When enabled, the
+# proxy calls GetAuthorizationToken and uses the returned Username/Token as
+# upstream Basic auth.
+volc_auth_enabled: false
+volc_access_key: ""
+volc_secret_key: ""
+volc_region: "cn-beijing"
+volc_endpoint: "https://cr.cn-beijing.volcengineapi.com"
+volc_registry: ""
+volc_refresh_before: 10m
+
 tls_cert_file: "/etc/registry-mirror-proxy/tls.crt"
 tls_key_file: "/etc/registry-mirror-proxy/tls.key"
 

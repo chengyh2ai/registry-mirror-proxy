@@ -34,6 +34,39 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now registry-mirror-proxy
 ```
 
+如果上游需要认证，建议用 systemd drop-in 注入环境变量：
+
+```bash
+sudo systemctl edit registry-mirror-proxy
+```
+
+```ini
+[Service]
+Environment="REGISTRY_MIRROR_UPSTREAM_USERNAME=your-upstream-user"
+Environment="REGISTRY_MIRROR_UPSTREAM_PASSWORD=your-upstream-password-or-token"
+```
+
+然后重启：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart registry-mirror-proxy
+```
+
+如果使用火山引擎 `GetAuthorizationToken` 自动获取临时访问密钥，使用下面的方式：
+
+```ini
+[Service]
+Environment="REGISTRY_MIRROR_VOLC_AUTH_ENABLED=true"
+Environment="REGISTRY_MIRROR_VOLC_ACCESS_KEY=your-ak"
+Environment="REGISTRY_MIRROR_VOLC_SECRET_KEY=your-sk"
+Environment="REGISTRY_MIRROR_VOLC_REGION=cn-beijing"
+Environment="REGISTRY_MIRROR_VOLC_ENDPOINT=https://cr.cn-beijing.volcengineapi.com"
+Environment="REGISTRY_MIRROR_VOLC_REGISTRY=your-registry-name"
+```
+
+其中 `REGISTRY_MIRROR_VOLC_REGISTRY` 是镜像仓库实例名称，不是域名。
+
 ## 5. 客户侧 Docker 配置
 
 `/etc/docker/daemon.json`：

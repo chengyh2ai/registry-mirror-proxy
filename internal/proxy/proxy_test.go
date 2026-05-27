@@ -78,6 +78,7 @@ func TestProxyRewritesExternalAuthenticateRealm(t *testing.T) {
 	p := newTestProxy(t, upstream, nil)
 	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/library/mysql/manifests/latest", nil)
 	req.Host = "192.168.44.100"
+	req.Header.Set("Authorization", "Bearer expired")
 	rec := httptest.NewRecorder()
 
 	p.ServeHTTP(rec, req)
@@ -179,6 +180,92 @@ func TestProxyRejectsWriteMethods(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+func TestProxyFetchesTokenAndRetriesManifestInternally(t *testing.T) {
+	var manifestHits int
+	var tokenHits int
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/library/mysql/manifests/latest":
+			manifestHits++
+			if r.Header.Get("Authorization") != "Bearer internal-token" {
+				w.Header().Set("WWW-Authenticate", `Bearer realm="https://`+r.Host+`/service/token",service="harbor-registry",scope="repository:library/mysql:pull",error="invalid_token"`)
+				w.Header().Set("Set-Cookie", "sid=abc; Path=/; HttpOnly")
+				writeRegistryError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authorize header needed")
+				return
+			}
+			_, _ = w.Write([]byte(`{"schemaVersion":2}`))
+		case "/service/token":
+			tokenHits++
+			if r.URL.Query().Get("service") != "harbor-registry" {
+				t.Fatalf("service = %q", r.URL.Query().Get("service"))
+			}
+			if r.URL.Query().Get("scope") != "repository:library/mysql:pull" {
+				t.Fatalf("scope = %q", r.URL.Query().Get("scope"))
+			}
+			if r.Header.Get("Cookie") != "sid=abc" {
+				t.Fatalf("cookie = %q", r.Header.Get("Cookie"))
+			}
+			_, _ = w.Write([]byte(`{"token":"internal-token"}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(t, upstream, nil)
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/library/mysql/manifests/latest", nil)
+	req.Host = "192.168.44.100"
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if tokenHits != 1 {
+		t.Fatalf("token hits = %d", tokenHits)
+	}
+	if manifestHits != 2 {
+		t.Fatalf("manifest hits = %d", manifestHits)
+	}
+}
+
+func TestProxyUsesConfiguredBasicAuthForTokenEndpoint(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v2/library/mysql/manifests/latest":
+			if r.Header.Get("Authorization") == "Bearer internal-token" {
+				_, _ = w.Write([]byte(`{"schemaVersion":2}`))
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Bearer realm="https://`+r.Host+`/service/token",service="harbor-registry",scope="repository:library/mysql:pull"`)
+			writeRegistryError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authorize header needed")
+		case "/service/token":
+			user, pass, ok := r.BasicAuth()
+			if !ok || user != "robot" || pass != "secret" {
+				t.Fatalf("basic auth = %q %q %v", user, pass, ok)
+			}
+			_, _ = w.Write([]byte(`{"token":"internal-token"}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(t, upstream, func(cfg *config.Config) {
+		cfg.UpstreamUsername = "robot"
+		cfg.UpstreamPassword = "secret"
+	})
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/library/mysql/manifests/latest", nil)
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 }
 

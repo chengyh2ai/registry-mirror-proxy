@@ -17,6 +17,15 @@ type Config struct {
 	ListenAddr            string        `yaml:"listen_addr"`
 	Upstream              string        `yaml:"upstream"`
 	Upstreams             []string      `yaml:"upstreams"`
+	UpstreamUsername      string        `yaml:"upstream_username"`
+	UpstreamPassword      string        `yaml:"upstream_password"`
+	VolcAuthEnabled       bool          `yaml:"volc_auth_enabled"`
+	VolcAccessKey         string        `yaml:"volc_access_key"`
+	VolcSecretKey         string        `yaml:"volc_secret_key"`
+	VolcRegion            string        `yaml:"volc_region"`
+	VolcEndpoint          string        `yaml:"volc_endpoint"`
+	VolcRegistry          string        `yaml:"volc_registry"`
+	VolcRefreshBefore     time.Duration `yaml:"volc_refresh_before"`
 	TLSCertFile           string        `yaml:"tls_cert_file"`
 	TLSKeyFile            string        `yaml:"tls_key_file"`
 	ReadTimeout           time.Duration `yaml:"read_timeout"`
@@ -55,6 +64,9 @@ func Defaults() Config {
 		EnableReadyCheck:      true,
 		DiskCacheDir:          "/var/cache/registry-mirror-proxy",
 		MaxConcurrentRequests: 0,
+		VolcRegion:            "cn-beijing",
+		VolcEndpoint:          "https://cr.cn-beijing.volcengineapi.com",
+		VolcRefreshBefore:     10 * time.Minute,
 	}
 }
 
@@ -105,6 +117,20 @@ func (c *Config) Validate() error {
 	if len(c.AllowMethods) == 0 {
 		return errors.New("allow_methods cannot be empty")
 	}
+	if c.VolcAuthEnabled {
+		if c.VolcAccessKey == "" {
+			return errors.New("volc_access_key is required when volc_auth_enabled is true")
+		}
+		if c.VolcSecretKey == "" {
+			return errors.New("volc_secret_key is required when volc_auth_enabled is true")
+		}
+		if c.VolcRegistry == "" {
+			return errors.New("volc_registry is required when volc_auth_enabled is true")
+		}
+		if c.VolcRegion == "" {
+			return errors.New("volc_region is required when volc_auth_enabled is true")
+		}
+	}
 	for _, cidr := range c.AllowedClientCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			return fmt.Errorf("invalid allowed_client_cidrs entry %q: %w", cidr, err)
@@ -116,6 +142,13 @@ func (c *Config) Validate() error {
 func applyEnv(c *Config) {
 	setString("REGISTRY_MIRROR_LISTEN_ADDR", &c.ListenAddr)
 	setString("REGISTRY_MIRROR_UPSTREAM", &c.Upstream)
+	setString("REGISTRY_MIRROR_UPSTREAM_USERNAME", &c.UpstreamUsername)
+	setString("REGISTRY_MIRROR_UPSTREAM_PASSWORD", &c.UpstreamPassword)
+	setString("REGISTRY_MIRROR_VOLC_ACCESS_KEY", &c.VolcAccessKey)
+	setString("REGISTRY_MIRROR_VOLC_SECRET_KEY", &c.VolcSecretKey)
+	setString("REGISTRY_MIRROR_VOLC_REGION", &c.VolcRegion)
+	setString("REGISTRY_MIRROR_VOLC_ENDPOINT", &c.VolcEndpoint)
+	setString("REGISTRY_MIRROR_VOLC_REGISTRY", &c.VolcRegistry)
 	setString("REGISTRY_MIRROR_TLS_CERT_FILE", &c.TLSCertFile)
 	setString("REGISTRY_MIRROR_TLS_KEY_FILE", &c.TLSKeyFile)
 	setString("REGISTRY_MIRROR_LOG_LEVEL", &c.LogLevel)
@@ -123,10 +156,12 @@ func applyEnv(c *Config) {
 	setBool("REGISTRY_MIRROR_HIDE_UPSTREAM_ERRORS", &c.HideUpstreamErrors)
 	setBool("REGISTRY_MIRROR_ENABLE_METRICS", &c.EnableMetrics)
 	setBool("REGISTRY_MIRROR_ENABLE_DISK_CACHE", &c.EnableDiskCache)
+	setBool("REGISTRY_MIRROR_VOLC_AUTH_ENABLED", &c.VolcAuthEnabled)
 	setDuration("REGISTRY_MIRROR_READ_TIMEOUT", &c.ReadTimeout)
 	setDuration("REGISTRY_MIRROR_WRITE_TIMEOUT", &c.WriteTimeout)
 	setDuration("REGISTRY_MIRROR_IDLE_TIMEOUT", &c.IdleTimeout)
 	setDuration("REGISTRY_MIRROR_UPSTREAM_TIMEOUT", &c.UpstreamTimeout)
+	setDuration("REGISTRY_MIRROR_VOLC_REFRESH_BEFORE", &c.VolcRefreshBefore)
 	setInt("REGISTRY_MIRROR_MAX_IDLE_CONNS", &c.MaxIdleConns)
 	setInt("REGISTRY_MIRROR_MAX_REDIRECTS", &c.MaxRedirects)
 	setInt("REGISTRY_MIRROR_MAX_CONCURRENT_REQUESTS", &c.MaxConcurrentRequests)
