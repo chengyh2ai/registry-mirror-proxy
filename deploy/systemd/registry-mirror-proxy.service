@@ -1,0 +1,21 @@
+[Unit]
+Description=Docker Registry Mirror Proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=registry-mirror
+Group=registry-mirror
+ExecStart=/usr/local/bin/registry-mirror-proxy --config /etc/registry-mirror-proxy/config.yaml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/cache/registry-mirror-proxy
+
+[Install]
+WantedBy=multi-user.target
