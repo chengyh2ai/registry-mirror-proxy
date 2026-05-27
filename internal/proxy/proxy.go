@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -293,7 +294,8 @@ func proxyablePath(path string) bool {
 	return strings.HasPrefix(path, "/v2/") ||
 		strings.HasPrefix(path, "/token") ||
 		strings.HasPrefix(path, "/service/token") ||
-		strings.HasPrefix(path, "/oauth2/token")
+		strings.HasPrefix(path, "/oauth2/token") ||
+		strings.Contains(strings.ToLower(path), "token")
 }
 
 func (p *Proxy) allowedMethodList() []string {
@@ -328,6 +330,7 @@ func copyHeader(dst, src http.Header) {
 }
 
 func sanitizeResponseHeaders(h http.Header, upstreams []*url.URL, publicBase string) {
+	rewriteAuthenticateRealm(h, publicBase)
 	for _, upstream := range upstreams {
 		host := upstream.Host
 		hostname := upstream.Hostname()
@@ -346,6 +349,42 @@ func sanitizeResponseHeaders(h http.Header, upstreams []*url.URL, publicBase str
 			h.Set("Location", u.String())
 		}
 	}
+}
+
+var quotedRealmRE = regexp.MustCompile(`realm="https://[^"]+"`)
+var bareRealmRE = regexp.MustCompile(`realm=https://[^,\s]+`)
+
+func rewriteAuthenticateRealm(h http.Header, publicBase string) {
+	values := h.Values("WWW-Authenticate")
+	if len(values) == 0 {
+		return
+	}
+	h.Del("WWW-Authenticate")
+	for _, value := range values {
+		value = quotedRealmRE.ReplaceAllStringFunc(value, func(match string) string {
+			raw := strings.TrimSuffix(strings.TrimPrefix(match, `realm="`), `"`)
+			return `realm="` + rewriteRealmURL(raw, publicBase) + `"`
+		})
+		value = bareRealmRE.ReplaceAllStringFunc(value, func(match string) string {
+			raw := strings.TrimPrefix(match, "realm=")
+			return "realm=" + rewriteRealmURL(raw, publicBase)
+		})
+		h.Add("WWW-Authenticate", value)
+	}
+}
+
+func rewriteRealmURL(raw, publicBase string) string {
+	realm, err := url.Parse(raw)
+	if err != nil || !realm.IsAbs() {
+		return raw
+	}
+	pub, err := url.Parse(publicBase)
+	if err != nil || pub.Host == "" {
+		return raw
+	}
+	realm.Scheme = "https"
+	realm.Host = pub.Host
+	return realm.String()
 }
 
 func hopByHopHeader(k string) bool {

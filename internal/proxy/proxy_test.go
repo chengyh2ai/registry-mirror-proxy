@@ -68,6 +68,29 @@ func TestProxyForwardsV2AndHidesUpstreamHost(t *testing.T) {
 	}
 }
 
+func TestProxyRewritesExternalAuthenticateRealm(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="https://auth.docker.io/token",service="registry.docker.io",scope="repository:library/mysql:pull"`)
+		writeRegistryError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(t, upstream, nil)
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/library/mysql/manifests/latest", nil)
+	req.Host = "192.168.44.100"
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	got := rec.Header().Get("WWW-Authenticate")
+	if !strings.Contains(got, `realm="https://192.168.44.100/token"`) {
+		t.Fatalf("realm was not rewritten to proxy host: %q", got)
+	}
+	if strings.Contains(got, "auth.docker.io") {
+		t.Fatalf("realm leaked external host: %q", got)
+	}
+}
+
 func TestProxyReturnsOKForDockerMirrorPing(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be called for local mirror ping")

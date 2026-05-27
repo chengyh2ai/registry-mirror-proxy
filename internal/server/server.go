@@ -42,6 +42,7 @@ func New(cfg config.Config, p *proxy.Proxy) *http.Server {
 	mux.Handle("/oauth2/token/", p)
 	mux.Handle("/v2/", p)
 	mux.Handle("/v2", p)
+	mux.Handle("/", p)
 
 	return &http.Server{
 		Addr:         cfg.ListenAddr,
