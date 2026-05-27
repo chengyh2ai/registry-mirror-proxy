@@ -47,7 +47,7 @@ func TestProxyForwardsV2AndHidesUpstreamHost(t *testing.T) {
 	defer upstream.Close()
 
 	p := newTestProxy(t, upstream, nil)
-	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/", nil)
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/library/alpine/manifests/latest", nil)
 	req.Host = "192.168.44.100"
 	rec := httptest.NewRecorder()
 
@@ -65,6 +65,49 @@ func TestProxyForwardsV2AndHidesUpstreamHost(t *testing.T) {
 	}
 	if got := rec.Header().Get("Location"); !strings.Contains(got, "192.168.44.100") {
 		t.Fatalf("location was not rewritten: %q", got)
+	}
+}
+
+func TestProxyReturnsOKForDockerMirrorPing(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be called for local mirror ping")
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(t, upstream, nil)
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/v2/", nil)
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Docker-Distribution-API-Version"); got != "registry/2.0" {
+		t.Fatalf("api version header = %q", got)
+	}
+}
+
+func TestProxyForwardsTokenEndpoint(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/token" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"token":"abc"}`))
+	}))
+	defer upstream.Close()
+
+	p := newTestProxy(t, upstream, nil)
+	req := httptest.NewRequest(http.MethodGet, "https://192.168.44.100/token?service=registry.docker.io", nil)
+	rec := httptest.NewRecorder()
+
+	p.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != `{"token":"abc"}` {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 

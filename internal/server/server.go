@@ -34,6 +34,12 @@ func New(cfg config.Config, p *proxy.Proxy) *http.Server {
 	if cfg.EnableMetrics {
 		mux.Handle("/metrics", p.Metrics())
 	}
+	mux.Handle("/token", p)
+	mux.Handle("/token/", p)
+	mux.Handle("/service/token", p)
+	mux.Handle("/service/token/", p)
+	mux.Handle("/oauth2/token", p)
+	mux.Handle("/oauth2/token/", p)
 	mux.Handle("/v2/", p)
 	mux.Handle("/v2", p)
 

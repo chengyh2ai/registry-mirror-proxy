@@ -149,7 +149,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(rec, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
-	if !strings.HasPrefix(r.URL.Path, "/v2/") && r.URL.Path != "/v2" {
+	if r.URL.Path == "/v2/" || r.URL.Path == "/v2" {
+		rec.Header().Set("Docker-Distribution-API-Version", "registry/2.0")
+		rec.WriteHeader(http.StatusOK)
+		return
+	}
+	if !proxyablePath(r.URL.Path) {
 		writeRegistryError(rec, http.StatusNotFound, "NAME_UNKNOWN", "unknown route")
 		return
 	}
@@ -282,6 +287,13 @@ func (p *Proxy) release() {
 		return
 	}
 	<-p.sem
+}
+
+func proxyablePath(path string) bool {
+	return strings.HasPrefix(path, "/v2/") ||
+		strings.HasPrefix(path, "/token") ||
+		strings.HasPrefix(path, "/service/token") ||
+		strings.HasPrefix(path, "/oauth2/token")
 }
 
 func (p *Proxy) allowedMethodList() []string {
