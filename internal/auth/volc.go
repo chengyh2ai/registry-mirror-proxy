@@ -12,7 +12,7 @@ import (
 	"github.com/volcengine/volcengine-go-sdk/volcengine/session"
 )
 
-type VolcConfig struct {
+type UpstreamAuthConfig struct {
 	AccessKey     string
 	SecretKey     string
 	Region        string
@@ -21,7 +21,7 @@ type VolcConfig struct {
 	RefreshBefore time.Duration
 }
 
-type VolcProvider struct {
+type UpstreamAuthProvider struct {
 	client        volcCRClient
 	registry      string
 	refreshBefore time.Duration
@@ -36,9 +36,9 @@ type volcCRClient interface {
 	GetAuthorizationTokenWithContext(ctx volcengine.Context, input *cr.GetAuthorizationTokenInput, opts ...request.Option) (*cr.GetAuthorizationTokenOutput, error)
 }
 
-func NewVolcProvider(cfg VolcConfig) (*VolcProvider, error) {
+func NewUpstreamAuthProvider(cfg UpstreamAuthConfig) (*UpstreamAuthProvider, error) {
 	if cfg.AccessKey == "" || cfg.SecretKey == "" || cfg.Region == "" || cfg.Registry == "" {
-		return nil, errors.New("volc auth requires access key, secret key, region, and registry")
+		return nil, errors.New("upstream auth requires access key, secret key, region, and registry")
 	}
 	if cfg.RefreshBefore <= 0 {
 		cfg.RefreshBefore = 10 * time.Minute
@@ -47,14 +47,14 @@ func NewVolcProvider(cfg VolcConfig) (*VolcProvider, error) {
 		WithRegion(cfg.Region).
 		WithAkSk(cfg.AccessKey, cfg.SecretKey).
 		WithEndpoint(cfg.Endpoint)))
-	return &VolcProvider{
+	return &UpstreamAuthProvider{
 		client:        cr.New(sess),
 		registry:      cfg.Registry,
 		refreshBefore: cfg.RefreshBefore,
 	}, nil
 }
 
-func (p *VolcProvider) BasicAuth(ctx context.Context) (string, string, error) {
+func (p *UpstreamAuthProvider) BasicAuth(ctx context.Context) (string, string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.username != "" && p.token != "" && time.Until(p.expires) > p.refreshBefore {
@@ -67,7 +67,7 @@ func (p *VolcProvider) BasicAuth(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	if out.Username == nil || out.Token == nil || *out.Username == "" || *out.Token == "" {
-		return "", "", errors.New("volc GetAuthorizationToken returned empty username or token")
+		return "", "", errors.New("upstream GetAuthorizationToken returned empty username or token")
 	}
 	expires := time.Now().Add(time.Hour)
 	if out.ExpireTime != nil && *out.ExpireTime != "" {

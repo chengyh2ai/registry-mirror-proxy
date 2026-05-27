@@ -12,7 +12,7 @@
 
 ```json
 {
-  "registry-mirrors": ["https://chengyh2go-cn-beijing.cr.volces.com"]
+  "registry-mirrors": ["https://<upstream-registry-domain>"]
 }
 ```
 
@@ -27,7 +27,7 @@
 其中 `192.168.44.100` 是代理程序所在服务器的 IP。代理程序负责转发 Docker Registry V2 请求到：
 
 ```text
-https://chengyh2go-cn-beijing.cr.volces.com
+https://<upstream-registry-domain>
 ```
 
 客户侧应能正常拉取镜像，并且不感知、不看到真实上游域名。
@@ -36,7 +36,7 @@ https://chengyh2go-cn-beijing.cr.volces.com
 
 1. 使用 Go 语言实现一个 Docker Registry Mirror 反向代理服务。
 2. 客户 Docker daemon 只配置代理服务器地址，例如 `https://192.168.44.100`。
-3. 代理服务将请求转发到上游镜像地址 `https://chengyh2go-cn-beijing.cr.volces.com`。
+3. 代理服务将请求转发到上游镜像地址 `https://<upstream-registry-domain>`。
 4. 支持 Docker 拉取镜像所需的 Registry V2 API 请求。
 5. 防止上游域名通过响应头、重定向、错误信息等方式泄露给客户。
 6. 提供可配置、可部署、可观测、可排错的服务形态。
@@ -100,7 +100,7 @@ docker pull library/redis:latest
 代理收到客户请求后，应转发到固定上游：
 
 ```text
-https://chengyh2go-cn-beijing.cr.volces.com
+https://<upstream-registry-domain>
 ```
 
 转发要求：
@@ -113,7 +113,7 @@ https://chengyh2go-cn-beijing.cr.volces.com
    - `If-None-Match`
    - `If-Modified-Since`
    - `User-Agent`
-3. 转发时将上游请求的 `Host` 设置为 `chengyh2go-cn-beijing.cr.volces.com`。
+3. 转发时将上游请求的 `Host` 设置为 `<upstream-registry-domain>`。
 4. 返回响应时保留关键响应头，例如：
    - `Content-Type`
    - `Content-Length`
@@ -129,7 +129,7 @@ https://chengyh2go-cn-beijing.cr.volces.com
 代理服务必须避免客户看到：
 
 ```text
-chengyh2go-cn-beijing.cr.volces.com
+<upstream-registry-domain>
 ```
 
 处理要求：
@@ -197,7 +197,7 @@ DELETE
 | 配置项 | 示例 | 说明 |
 | --- | --- | --- |
 | `listen_addr` | `:443` | 监听地址 |
-| `upstream` | `https://chengyh2go-cn-beijing.cr.volces.com` | 上游镜像地址 |
+| `upstream` | `https://<upstream-registry-domain>` | 上游镜像地址 |
 | `tls_cert_file` | `/etc/registry-mirror-proxy/tls.crt` | TLS 证书 |
 | `tls_key_file` | `/etc/registry-mirror-proxy/tls.key` | TLS 私钥 |
 | `read_timeout` | `30s` | 请求读取超时 |
@@ -253,7 +253,7 @@ GET /readyz
 ```mermaid
 flowchart LR
   A["客户 Docker daemon"] -->|HTTPS https://192.168.44.100/v2/...| B["Go Registry Mirror Proxy"]
-  B -->|HTTPS https://chengyh2go-cn-beijing.cr.volces.com/v2/...| C["火山引擎镜像加速服务"]
+  B -->|HTTPS https://<upstream-registry-domain>/v2/...| C["火山引擎镜像加速服务"]
   C -->|Manifest / Blob / Tags| B
   B -->|隐藏上游域名后的响应| A
 ```
@@ -343,7 +343,7 @@ TCP 443
 代理服务器需要能访问：
 
 ```text
-chengyh2go-cn-beijing.cr.volces.com:443
+<upstream-registry-domain>:443
 ```
 
 ## 8. 验收标准
@@ -387,7 +387,7 @@ docker pull nginx:latest
 客户侧不应看到：
 
 ```text
-chengyh2go-cn-beijing.cr.volces.com
+<upstream-registry-domain>
 ```
 
 重点检查：

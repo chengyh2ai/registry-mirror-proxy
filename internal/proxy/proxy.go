@@ -105,14 +105,14 @@ func New(cfg config.Config, logger *slog.Logger) (*Proxy, error) {
 		sem = make(chan struct{}, cfg.MaxConcurrentRequests)
 	}
 	var provider credentialProvider
-	if cfg.VolcAuthEnabled {
-		provider, err = auth.NewVolcProvider(auth.VolcConfig{
-			AccessKey:     cfg.VolcAccessKey,
-			SecretKey:     cfg.VolcSecretKey,
-			Region:        cfg.VolcRegion,
-			Endpoint:      cfg.VolcEndpoint,
-			Registry:      cfg.VolcRegistry,
-			RefreshBefore: cfg.VolcRefreshBefore,
+	if cfg.UpstreamAuthEnabled {
+		provider, err = auth.NewUpstreamAuthProvider(auth.UpstreamAuthConfig{
+			AccessKey:     cfg.UpstreamAccessKey,
+			SecretKey:     cfg.UpstreamSecretKey,
+			Region:        cfg.UpstreamRegion,
+			Endpoint:      cfg.UpstreamEndpoint,
+			Registry:      cfg.UpstreamRegistry,
+			RefreshBefore: cfg.UpstreamRefreshBefore,
 		})
 		if err != nil {
 			return nil, err

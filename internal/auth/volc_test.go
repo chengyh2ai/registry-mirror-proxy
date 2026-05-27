@@ -20,7 +20,7 @@ func (f *fakeCRClient) GetAuthorizationTokenWithContext(ctx volcengine.Context, 
 	return f.out, nil
 }
 
-func TestVolcProviderCachesToken(t *testing.T) {
+func TestUpstreamAuthProviderCachesToken(t *testing.T) {
 	fake := &fakeCRClient{
 		out: &cr.GetAuthorizationTokenOutput{
 			Username:   volcengine.String("user"),
@@ -28,7 +28,7 @@ func TestVolcProviderCachesToken(t *testing.T) {
 			ExpireTime: volcengine.String(time.Now().Add(time.Hour).Format(time.RFC3339)),
 		},
 	}
-	p := &VolcProvider{
+	p := &UpstreamAuthProvider{
 		client:        fake,
 		registry:      "registrya",
 		refreshBefore: 10 * time.Minute,

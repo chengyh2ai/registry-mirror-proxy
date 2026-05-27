@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"registry-mirror/internal/secret"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,13 +21,13 @@ type Config struct {
 	Upstreams             []string      `yaml:"upstreams"`
 	UpstreamUsername      string        `yaml:"upstream_username"`
 	UpstreamPassword      string        `yaml:"upstream_password"`
-	VolcAuthEnabled       bool          `yaml:"volc_auth_enabled"`
-	VolcAccessKey         string        `yaml:"volc_access_key"`
-	VolcSecretKey         string        `yaml:"volc_secret_key"`
-	VolcRegion            string        `yaml:"volc_region"`
-	VolcEndpoint          string        `yaml:"volc_endpoint"`
-	VolcRegistry          string        `yaml:"volc_registry"`
-	VolcRefreshBefore     time.Duration `yaml:"volc_refresh_before"`
+	UpstreamAuthEnabled   bool          `yaml:"upstream_auth_enabled"`
+	UpstreamAccessKey     string        `yaml:"upstream_access_key"`
+	UpstreamSecretKey     string        `yaml:"upstream_secret_key"`
+	UpstreamRegion        string        `yaml:"upstream_region"`
+	UpstreamEndpoint      string        `yaml:"upstream_endpoint"`
+	UpstreamRegistry      string        `yaml:"upstream_registry"`
+	UpstreamRefreshBefore time.Duration `yaml:"upstream_refresh_before"`
 	TLSCertFile           string        `yaml:"tls_cert_file"`
 	TLSKeyFile            string        `yaml:"tls_key_file"`
 	ReadTimeout           time.Duration `yaml:"read_timeout"`
@@ -50,7 +52,7 @@ type Config struct {
 func Defaults() Config {
 	return Config{
 		ListenAddr:            ":443",
-		Upstream:              "https://chengyh2go-cn-beijing.cr.volces.com",
+		Upstream:              "",
 		ReadTimeout:           30 * time.Second,
 		WriteTimeout:          0,
 		IdleTimeout:           120 * time.Second,
@@ -64,9 +66,9 @@ func Defaults() Config {
 		EnableReadyCheck:      true,
 		DiskCacheDir:          "/var/cache/registry-mirror-proxy",
 		MaxConcurrentRequests: 0,
-		VolcRegion:            "cn-beijing",
-		VolcEndpoint:          "https://cr.cn-beijing.volcengineapi.com",
-		VolcRefreshBefore:     10 * time.Minute,
+		UpstreamRegion:        "",
+		UpstreamEndpoint:      "",
+		UpstreamRefreshBefore: 10 * time.Minute,
 	}
 }
 
@@ -82,6 +84,9 @@ func Load(path string) (Config, error) {
 		}
 	}
 	applyEnv(&cfg)
+	if err := cfg.Decrypt(os.Getenv("REGISTRY_MIRROR_CONFIG_KEY")); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -117,18 +122,21 @@ func (c *Config) Validate() error {
 	if len(c.AllowMethods) == 0 {
 		return errors.New("allow_methods cannot be empty")
 	}
-	if c.VolcAuthEnabled {
-		if c.VolcAccessKey == "" {
-			return errors.New("volc_access_key is required when volc_auth_enabled is true")
+	if c.UpstreamAuthEnabled {
+		if c.UpstreamAccessKey == "" {
+			return errors.New("upstream_access_key is required when upstream_auth_enabled is true")
 		}
-		if c.VolcSecretKey == "" {
-			return errors.New("volc_secret_key is required when volc_auth_enabled is true")
+		if c.UpstreamSecretKey == "" {
+			return errors.New("upstream_secret_key is required when upstream_auth_enabled is true")
 		}
-		if c.VolcRegistry == "" {
-			return errors.New("volc_registry is required when volc_auth_enabled is true")
+		if c.UpstreamRegistry == "" {
+			return errors.New("upstream_registry is required when upstream_auth_enabled is true")
 		}
-		if c.VolcRegion == "" {
-			return errors.New("volc_region is required when volc_auth_enabled is true")
+		if c.UpstreamRegion == "" {
+			return errors.New("upstream_region is required when upstream_auth_enabled is true")
+		}
+		if c.UpstreamEndpoint == "" {
+			return errors.New("upstream_endpoint is required when upstream_auth_enabled is true")
 		}
 	}
 	for _, cidr := range c.AllowedClientCIDRs {
@@ -139,16 +147,62 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+func (c *Config) Decrypt(key string) error {
+	var err error
+	decrypt := func(name string, value *string) error {
+		if !secret.IsEncrypted(*value) {
+			return nil
+		}
+		if key == "" {
+			return fmt.Errorf("%s is encrypted but REGISTRY_MIRROR_CONFIG_KEY is not set", name)
+		}
+		*value, err = secret.Decrypt(*value, key)
+		if err != nil {
+			return fmt.Errorf("decrypt %s: %w", name, err)
+		}
+		return nil
+	}
+	for _, item := range []struct {
+		name  string
+		value *string
+	}{
+		{"upstream", &c.Upstream},
+		{"upstream_username", &c.UpstreamUsername},
+		{"upstream_password", &c.UpstreamPassword},
+		{"upstream_access_key", &c.UpstreamAccessKey},
+		{"upstream_secret_key", &c.UpstreamSecretKey},
+		{"upstream_region", &c.UpstreamRegion},
+		{"upstream_endpoint", &c.UpstreamEndpoint},
+		{"upstream_registry", &c.UpstreamRegistry},
+	} {
+		if err := decrypt(item.name, item.value); err != nil {
+			return err
+		}
+	}
+	for i := range c.Upstreams {
+		if secret.IsEncrypted(c.Upstreams[i]) {
+			if key == "" {
+				return fmt.Errorf("upstreams[%d] is encrypted but REGISTRY_MIRROR_CONFIG_KEY is not set", i)
+			}
+			c.Upstreams[i], err = secret.Decrypt(c.Upstreams[i], key)
+			if err != nil {
+				return fmt.Errorf("decrypt upstreams[%d]: %w", i, err)
+			}
+		}
+	}
+	return nil
+}
+
 func applyEnv(c *Config) {
 	setString("REGISTRY_MIRROR_LISTEN_ADDR", &c.ListenAddr)
 	setString("REGISTRY_MIRROR_UPSTREAM", &c.Upstream)
 	setString("REGISTRY_MIRROR_UPSTREAM_USERNAME", &c.UpstreamUsername)
 	setString("REGISTRY_MIRROR_UPSTREAM_PASSWORD", &c.UpstreamPassword)
-	setString("REGISTRY_MIRROR_VOLC_ACCESS_KEY", &c.VolcAccessKey)
-	setString("REGISTRY_MIRROR_VOLC_SECRET_KEY", &c.VolcSecretKey)
-	setString("REGISTRY_MIRROR_VOLC_REGION", &c.VolcRegion)
-	setString("REGISTRY_MIRROR_VOLC_ENDPOINT", &c.VolcEndpoint)
-	setString("REGISTRY_MIRROR_VOLC_REGISTRY", &c.VolcRegistry)
+	setString("REGISTRY_MIRROR_UPSTREAM_ACCESS_KEY", &c.UpstreamAccessKey)
+	setString("REGISTRY_MIRROR_UPSTREAM_SECRET_KEY", &c.UpstreamSecretKey)
+	setString("REGISTRY_MIRROR_UPSTREAM_REGION", &c.UpstreamRegion)
+	setString("REGISTRY_MIRROR_UPSTREAM_ENDPOINT", &c.UpstreamEndpoint)
+	setString("REGISTRY_MIRROR_UPSTREAM_REGISTRY", &c.UpstreamRegistry)
 	setString("REGISTRY_MIRROR_TLS_CERT_FILE", &c.TLSCertFile)
 	setString("REGISTRY_MIRROR_TLS_KEY_FILE", &c.TLSKeyFile)
 	setString("REGISTRY_MIRROR_LOG_LEVEL", &c.LogLevel)
@@ -156,12 +210,12 @@ func applyEnv(c *Config) {
 	setBool("REGISTRY_MIRROR_HIDE_UPSTREAM_ERRORS", &c.HideUpstreamErrors)
 	setBool("REGISTRY_MIRROR_ENABLE_METRICS", &c.EnableMetrics)
 	setBool("REGISTRY_MIRROR_ENABLE_DISK_CACHE", &c.EnableDiskCache)
-	setBool("REGISTRY_MIRROR_VOLC_AUTH_ENABLED", &c.VolcAuthEnabled)
+	setBool("REGISTRY_MIRROR_UPSTREAM_AUTH_ENABLED", &c.UpstreamAuthEnabled)
 	setDuration("REGISTRY_MIRROR_READ_TIMEOUT", &c.ReadTimeout)
 	setDuration("REGISTRY_MIRROR_WRITE_TIMEOUT", &c.WriteTimeout)
 	setDuration("REGISTRY_MIRROR_IDLE_TIMEOUT", &c.IdleTimeout)
 	setDuration("REGISTRY_MIRROR_UPSTREAM_TIMEOUT", &c.UpstreamTimeout)
-	setDuration("REGISTRY_MIRROR_VOLC_REFRESH_BEFORE", &c.VolcRefreshBefore)
+	setDuration("REGISTRY_MIRROR_UPSTREAM_REFRESH_BEFORE", &c.UpstreamRefreshBefore)
 	setInt("REGISTRY_MIRROR_MAX_IDLE_CONNS", &c.MaxIdleConns)
 	setInt("REGISTRY_MIRROR_MAX_REDIRECTS", &c.MaxRedirects)
 	setInt("REGISTRY_MIRROR_MAX_CONCURRENT_REQUESTS", &c.MaxConcurrentRequests)

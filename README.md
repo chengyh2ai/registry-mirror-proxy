@@ -8,13 +8,7 @@
 }
 ```
 
-代理服务会在服务端访问真实上游：
-
-```text
-https://chengyh2go-cn-beijing.cr.volces.com
-```
-
-并尽量避免把真实上游域名通过响应头、重定向和错误响应暴露给客户。
+代理服务会在服务端访问真实上游，并尽量避免把真实上游域名通过响应头、重定向和错误响应暴露给客户。
 
 ## 功能
 
@@ -49,23 +43,36 @@ Environment="REGISTRY_MIRROR_UPSTREAM_PASSWORD=your-upstream-password-or-token"
 
 代理会在内部请求上游 token，并用 Bearer token 重试 manifest/blob 请求。
 
-火山引擎也可以通过 `GetAuthorizationToken` 自动获取临时访问凭据：
+也可以通过上游授权 API 自动获取临时访问凭据：
 
 ```yaml
-volc_auth_enabled: true
-volc_region: "cn-beijing"
-volc_endpoint: "https://cr.cn-beijing.volcengineapi.com"
-volc_registry: "你的实例名称"
+upstream_auth_enabled: true
+upstream_region: "go-sec-v1-..."
+upstream_endpoint: "go-sec-v1-..."
+upstream_registry: "go-sec-v1-..."
+upstream_access_key: "go-sec-v1-..."
+upstream_secret_key: "go-sec-v1-..."
 ```
 
-AK/SK 建议通过 systemd 环境变量注入：
+加密使用 `go-sec` 工具：
+
+```bash
+export REGISTRY_MIRROR_CONFIG_KEY='一串足够长的本地密钥'
+go build -o go-sec ./cmd/go-sec
+./go-sec '明文内容'
+```
+
+输出会是：
+
+```text
+go-sec-v1-...
+```
+
+代理启动时也需要同一把解密密钥：
 
 ```ini
 [Service]
-Environment="REGISTRY_MIRROR_VOLC_AUTH_ENABLED=true"
-Environment="REGISTRY_MIRROR_VOLC_ACCESS_KEY=你的AK"
-Environment="REGISTRY_MIRROR_VOLC_SECRET_KEY=你的SK"
-Environment="REGISTRY_MIRROR_VOLC_REGISTRY=你的实例名称"
+Environment="REGISTRY_MIRROR_CONFIG_KEY=一串足够长的本地密钥"
 ```
 
 代理会缓存 `GetAuthorizationToken` 返回的 `Username` 和 `Token`，并在过期前自动刷新。

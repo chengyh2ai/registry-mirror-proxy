@@ -53,19 +53,34 @@ sudo systemctl daemon-reload
 sudo systemctl restart registry-mirror-proxy
 ```
 
-如果使用火山引擎 `GetAuthorizationToken` 自动获取临时访问密钥，使用下面的方式：
+如果使用上游授权 API 自动获取临时访问密钥，配置文件中使用下面的参数：
+
+```yaml
+upstream_auth_enabled: true
+upstream: "go-sec-v1-..."
+upstream_access_key: "go-sec-v1-..."
+upstream_secret_key: "go-sec-v1-..."
+upstream_region: "go-sec-v1-..."
+upstream_endpoint: "go-sec-v1-..."
+upstream_registry: "go-sec-v1-..."
+```
+
+使用 `go-sec` 生成密文：
+
+```bash
+export REGISTRY_MIRROR_CONFIG_KEY='change-me-to-a-long-local-key'
+go build -o go-sec ./cmd/go-sec
+./go-sec '明文内容'
+```
+
+服务启动时注入同一把解密密钥：
 
 ```ini
 [Service]
-Environment="REGISTRY_MIRROR_VOLC_AUTH_ENABLED=true"
-Environment="REGISTRY_MIRROR_VOLC_ACCESS_KEY=your-ak"
-Environment="REGISTRY_MIRROR_VOLC_SECRET_KEY=your-sk"
-Environment="REGISTRY_MIRROR_VOLC_REGION=cn-beijing"
-Environment="REGISTRY_MIRROR_VOLC_ENDPOINT=https://cr.cn-beijing.volcengineapi.com"
-Environment="REGISTRY_MIRROR_VOLC_REGISTRY=your-registry-name"
+Environment="REGISTRY_MIRROR_CONFIG_KEY=change-me-to-a-long-local-key"
 ```
 
-其中 `REGISTRY_MIRROR_VOLC_REGISTRY` 是镜像仓库实例名称，不是域名。
+其中 `upstream_registry` 是镜像仓库实例名称，不是域名。
 
 ## 5. 客户侧 Docker 配置
 
